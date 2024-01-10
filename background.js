@@ -1,72 +1,80 @@
 'use strict';
 
+const DEBUG = false
+
 //clase para manejar los intevalos de manera centralizada
-class Timer{
+class Timer {
 
-  constructor(Interval=1000,callBack=null){
-      this.Interval=Interval
-      this.callBack=callBack
-      this.myThread=null
-      this.enabled=false
+  constructor(Interval = 1000, callBack = null) {
+    this.Interval = Interval
+    this.callBack = callBack
+    this.myThread = null
+    this.enabled = false
   }
 
-  start(){
-      this.myThread=setTimeout(this.Tick,this.Interval,this)
-      this.enabled=true
+  start() {
+
+    if(DEBUG){
+      this.startTime = performance.now();
+    }
+
+    this.myThread = setTimeout(this.Tick, this.Interval, this)
+    this.enabled = true
   }
 
-  stop(){
-      clearTimeout(this.myThread)
-      this.enabled=false
+  stop() {
+    clearTimeout(this.myThread)
+    this.enabled = false
   }
 
-  setCallback(callBack=null){ this.callBack=callBack }
+  setCallback(callBack = null) { this.callBack = callBack }
 
-  setInterval(Interval=1000){ this.Interval=Interval }
+  setInterval(Interval = 1000) { this.Interval = Interval }
 
-  isrunning(){ return this.enabled }
+  isrunning() { return this.enabled }
 
-  async Tick(_this){
-      
-      if(_this.callBack){
-          await _this.callBack(_this.Interval) 
-      }  
+  async Tick(_this) {
 
-      //se reinicia el hilo
-      _this.start() 
+    if (_this.callBack) {
+      _this.callBack(_this.Interval)
+    }
+   
+    if(DEBUG){
+      const endTime = performance.now();
+      const elapsedTime = endTime - _this.startTime;
+      console.log(`Tiempo transcurrido: ${elapsedTime} milisegundos`);
+    }
+
+    //se reinicia el hilo
+    _this.start()
 
   }
-  
+
 }
 
 // declaracion del objeto que manejara los intervalos
-const tick= new Timer(1500, async ()=>{ 
+const tick = new Timer(1500, async () => {
 
   try {
-    
+
     //obtiene todas las pestañas abiertas en el navegador para recorrerlas
-    const tabs= await queryTabs(); 
+    const tabs = await queryTabs();
 
-    for (let i = 0; i < tabs.length; i++) {
-      
-      const tab=tabs[i]
+    // Filtra las pestañas válidas antes de iniciar las descargas
+    const validTabs = tabs.filter(tab => isValidHost(tab.url));
 
-      //solo ejecuta la descarga si es un host valido
-      if(isValidHost(tab.url)){
+    // Paraleliza las descargas
+    Promise.all(validTabs.map(tab => downloadHtml(tab.id)));
 
-        //inicia la descarga del contrenido de la pagina
-        await downloadHtml(tab.id)
-        //limpia el historial de las descargas del navegador
-        await browser.downloads.erase({});
-
-      }
-
+    if (!DEBUG) {
+      // Limpia el historial de las descargas del navegador una vez que todas las descargas han finalizado
+      browser.downloads.erase({});
     }
 
   } catch (error) {
-    console.error("Error en la consulta de pestañas:", error);
+    console.error(error);
   }
-  
+
 })
 
 //funcion para obtener las pestañas del navegador de manera asincrona
@@ -85,38 +93,59 @@ function queryTabs() {
 //funcion para validar los host disponibles
 const isValidHost = (url) => url.includes('bet365')
 
+//cuncion para ejecutar scripts en la pagina
+const getHtmlPage = (tabId) => {
+  return new Promise((resolve) => {
+    browser.tabs.executeScript(tabId, { code: 'document.documentElement.outerHTML' }, (result) => {
+      resolve(result[0])
+    })
+  })
+}
+
 //funcion para descargar el contenido de la pagina
-const downloadHtml =  (tabId) =>{
+const downloadHtml = (tabId) => {
 
-  return new Promise((resolve ,reject)=>{
+  return new Promise(async (resolve, reject) => {
 
-    browser.tabs.executeScript(tabId, { code: 'document.documentElement.outerHTML' }, function (result) {
+    //obtiene el html de la pagina
+    const html = await getHtmlPage(tabId)
+    //crea el objeto blob del html para descargarlo
+    const blob = new Blob([html], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
 
-      //parsea el resultado de la pagina para su posterior descarga
-      const html = result[0];
-      const blob = new Blob([html], { type: "text/html" });
-      const url = URL.createObjectURL(blob);
+    try {
 
-      //descarga y sobre escribe el archivo
-      browser.downloads.download({ url: url, filename: 'pagina.html',conflictAction: 'overwrite', })
-      .then(downloadId => {
+      //inicia la descarga y almacena el id
+      const downloadId = await browser.downloads.download({ url: url, filename: 'pagina.html' })
 
-          browser.downloads.onChanged.addListener(function onChanged(downloadItem) {
-            
-            if (downloadItem.id === downloadId && downloadItem.state && downloadItem.state.current === "complete") {
-              // Dejar de escuchar una vez que la descarga ha finalizado
-              browser.downloads.onChanged.removeListener(onChanged); 
-              //limpia el objeto creado una vez descargado
-              URL.revokeObjectURL(url);
-              //resuelve la promesa para que seguir en el ciclo
-              resolve();
-            }
+      //se delara la funcion para manejar la descarga
+      const handleDownload = (downloadItem) => {
 
-          });
-     
-      })
+        if (downloadItem.id === downloadId && downloadItem.state && downloadItem.state.current === "complete") {
+          
+          browser.downloads.onChanged.removeListener(handleDownload);
+          URL.revokeObjectURL(url);
+          resolve();
 
-    });
+        } else if (downloadItem.id === downloadId && downloadItem.state && downloadItem.state.current === "interrupted") {
+          // Descarga interrumpida (fallida)
+          browser.downloads.onChanged.removeListener(handleDownload);
+          URL.revokeObjectURL(url);
+          reject(new Error(`La descarga fue interrumpida. Motivo: ${downloadItem.error}`));
+
+        }
+
+      }
+
+      //se escucha la descarga para manejarla
+      browser.downloads.onChanged.addListener(handleDownload);
+
+    } catch (error) {
+
+      // Error al iniciar la descarga
+      URL.revokeObjectURL(url);
+      reject(error);
+    }
 
   })
 
