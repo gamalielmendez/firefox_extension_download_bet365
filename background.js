@@ -14,7 +14,7 @@ class Timer {
 
   start() {
 
-    if(DEBUG){
+    if (DEBUG) {
       this.startTime = performance.now();
     }
 
@@ -38,8 +38,8 @@ class Timer {
     if (_this.callBack) {
       _this.callBack(_this.Interval)
     }
-   
-    if(DEBUG){
+
+    if (DEBUG) {
       const endTime = performance.now();
       const elapsedTime = endTime - _this.startTime;
       console.log(`Tiempo transcurrido: ${elapsedTime} milisegundos`);
@@ -52,30 +52,6 @@ class Timer {
 
 }
 
-// declaracion del objeto que manejara los intervalos
-const tick = new Timer(1500, async () => {
-
-  try {
-
-    //obtiene todas las pestañas abiertas en el navegador para recorrerlas
-    const tabs = await queryTabs();
-
-    // Filtra las pestañas válidas antes de iniciar las descargas
-    const validTabs = tabs.filter(tab => isValidHost(tab.url));
-
-    // Paraleliza las descargas
-    Promise.all(validTabs.map(tab => downloadHtml(tab.id)));
-
-    if (!DEBUG) {
-      // Limpia el historial de las descargas del navegador una vez que todas las descargas han finalizado
-      browser.downloads.erase({});
-    }
-
-  } catch (error) {
-    console.error(error);
-  }
-
-})
 
 //funcion para obtener las pestañas del navegador de manera asincrona
 function queryTabs() {
@@ -122,7 +98,7 @@ const downloadHtml = (tabId) => {
       const handleDownload = (downloadItem) => {
 
         if (downloadItem.id === downloadId && downloadItem.state && downloadItem.state.current === "complete") {
-          
+
           browser.downloads.onChanged.removeListener(handleDownload);
           URL.revokeObjectURL(url);
           resolve();
@@ -151,5 +127,93 @@ const downloadHtml = (tabId) => {
 
 }
 
-// arranca el intervalos
-tick.start()
+const setConfig = ({ ejecutando = true, intervalo = 1500 }) => {
+
+  return new Promise((resolve) => {
+    browser.storage.local.set({ 'config': { ejecutando, intervalo } }, function () {
+      resolve({ ejecutando, intervalo })
+    });
+  })
+
+}
+
+const getConfig = () => {
+  return new Promise((resolve, reject) => {
+    browser.storage.local.get('config').then(result => {
+      const config = result.config || { ejecutando: true, intervalo: 1500 };
+      resolve(config);
+    }).catch(error => {
+      resolve({ ejecutando: true, intervalo: 1500 });
+    });
+  });
+};
+
+// declaracion del objeto que manejara los intervalos
+const tick = new Timer(1500, async () => {
+
+  try {
+
+    //obtiene todas las pestañas abiertas en el navegador para recorrerlas
+    const tabs = await queryTabs();
+
+    // Filtra las pestañas válidas antes de iniciar las descargas
+    const validTabs = tabs.filter(tab => isValidHost(tab.url));
+
+    // Paraleliza las descargas
+    Promise.all(validTabs.map(tab => downloadHtml(tab.id)));
+
+    if (!DEBUG) {
+      // Limpia el historial de las descargas del navegador una vez que todas las descargas han finalizado
+      browser.downloads.erase({});
+    }
+
+  } catch (error) {
+    console.error(error);
+  }
+
+})
+
+//obtiene la configuracion de la extencion
+let Config = {}
+getConfig().then((conf) => {
+
+  Config = conf;
+
+  if (!Config.ejecutando) {
+    return
+  }
+
+  //establece el intervalo de la configuracion
+  tick.setInterval(Config.intervalo)
+  // arranca el intervalos
+  tick.start()
+
+})
+
+// Escucha los mensajes enviados desde otros scripts o extensiones
+browser.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
+
+  switch (request.action) {
+    case "getConfig":
+
+      //se obtiene la configuracion
+      return await getConfig();
+
+    case "setConfig":
+
+      //se almacena la configuracion
+      await setConfig(request.config);
+
+      //se establece el intervalo
+      tick.setInterval(request.config.intervalo)
+
+      //se apaga o activa el intervalo dependiendo de la configuracion
+      if (!request.config.ejecutando && tick.isrunning()) {
+        tick.stop()
+      } else if (request.config.ejecutando && !tick.isrunning()) {
+        tick.start()
+      }
+
+      return true
+  }
+});
