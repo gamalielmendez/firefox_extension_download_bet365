@@ -5,10 +5,10 @@ document.addEventListener('DOMContentLoaded', function () {
 
     boton.addEventListener("click", () => {
         boton.innerText = (boton.innerText === "Detener") ? "Iniciar" : "Detener";
-        saveLocalConfig()
+        setLocalConfig()
     });
 
-    input.addEventListener("input", () => saveLocalConfig());
+    input.addEventListener("input", () => setLocalConfig());
 
     //carga la configuracion
     getLocalConfig()
@@ -33,7 +33,7 @@ const getLocalConfig = async () => {
     }
 };
 
-const saveLocalConfig = async () => {
+const setLocalConfig = async () => {
 
     const boton = document.getElementById("toggleButton");
     const input = document.getElementById("intervalInput");
