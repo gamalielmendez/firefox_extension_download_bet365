@@ -4,54 +4,61 @@ const DEBUG = false
 
 //clase para manejar los intevalos de manera centralizada
 class Timer {
-
-  constructor(Interval = 1000, callBack = null) {
-    this.Interval = Interval
-    this.callBack = callBack
-    this.myThread = null
-    this.enabled = false
+  constructor(interval = 1000, callBack = null) {
+    this.interval = interval;
+    this.callBack = callBack;
+    this.enabled = false;
+    this.timerId = null;
+    this.startTime = 0;
   }
 
   start() {
+    if (this.enabled) return; // Evita iniciar un nuevo temporizador si ya está en funcionamiento
+    this.enabled = true;
+    this.startTime = performance.now(); // Registra el tiempo de inicio
 
-    if (DEBUG) {
-      this.startTime = performance.now();
-    }
-
-    this.myThread = setTimeout(this.Tick, this.Interval, this)
-    this.enabled = true
+    this.tick(); // Llama a tick directamente en lugar de setTimeout
   }
 
   stop() {
-    clearTimeout(this.myThread)
-    this.enabled = false
+    clearTimeout(this.timerId);
+    this.enabled = false;
   }
 
-  setCallback(callBack = null) { this.callBack = callBack }
+  setCallback(callBack) {
+    this.callBack = callBack;
+  }
 
-  setInterval(Interval = 1000) { this.Interval = Interval }
+  setInterval(interval) {
+    this.interval = interval;
+    if (this.enabled) {
+      this.stop();
+      this.start(); // Reinicia el temporizador con el nuevo intervalo si ya está en funcionamiento
+    }
+  }
 
-  isrunning() { return this.enabled }
+  isRunning() {
+    return this.enabled;
+  }
 
-  async Tick(_this) {
-
-    if (_this.callBack) {
-      _this.callBack(_this.Interval)
+  async tick() {
+    if (this.callBack) {
+      this.callBack(this.interval);
     }
 
     if (DEBUG) {
       const endTime = performance.now();
-      const elapsedTime = endTime - _this.startTime;
+      const elapsedTime = endTime - this.startTime;
       console.log(`Tiempo transcurrido: ${elapsedTime} milisegundos`);
+      this.startTime = performance.now();
     }
 
-    //se reinicia el hilo
-    _this.start()
-
+    if (this.enabled) {
+      // Solo reinicia el temporizador si aún está habilitado
+      this.timerId = setTimeout(this.tick.bind(this), this.interval);
+    }
   }
-
 }
-
 
 //funcion para obtener las pestañas del navegador de manera asincrona
 function queryTabs() {
@@ -83,10 +90,8 @@ const downloadHtml = (tabId) => {
 
   return new Promise(async (resolve, reject) => {
 
-    //obtiene el html de la pagina
-    const html = await getHtmlPage(tabId)
     //crea el objeto blob del html para descargarlo
-    const blob = new Blob([html], { type: "text/html" });
+    let blob = new Blob([await getHtmlPage(tabId)], { type: "text/html" });
     const url = URL.createObjectURL(blob);
 
     try {
@@ -101,13 +106,15 @@ const downloadHtml = (tabId) => {
 
           browser.downloads.onChanged.removeListener(handleDownload);
           URL.revokeObjectURL(url);
+          blob=null
           resolve();
 
         } else if (downloadItem.id === downloadId && downloadItem.state && downloadItem.state.current === "interrupted") {
           // Descarga interrumpida (fallida)
           browser.downloads.onChanged.removeListener(handleDownload);
           URL.revokeObjectURL(url);
-          reject(new Error(`La descarga fue interrumpida. Motivo: ${downloadItem.error}`));
+          blob=null
+          resolve()
 
         }
 
@@ -120,6 +127,7 @@ const downloadHtml = (tabId) => {
 
       // Error al iniciar la descarga
       URL.revokeObjectURL(url);
+      blob=null
       reject(error);
     }
 
@@ -154,7 +162,7 @@ const tick = new Timer(1500, async () => {
   try {
 
     //obtiene todas las pestañas abiertas en el navegador para recorrerlas
-    const tabs = await queryTabs();
+    const tabs = await queryTabs()
 
     // Filtra las pestañas válidas antes de iniciar las descargas
     const validTabs = tabs.filter(tab => isValidHost(tab.url));
@@ -208,9 +216,9 @@ browser.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
       tick.setInterval(request.config.intervalo)
 
       //se apaga o activa el intervalo dependiendo de la configuracion
-      if (!request.config.ejecutando && tick.isrunning()) {
+      if (!request.config.ejecutando && tick.isRunning()) {
         tick.stop()
-      } else if (request.config.ejecutando && !tick.isrunning()) {
+      } else if (request.config.ejecutando && !tick.isRunning()) {
         tick.start()
       }
 

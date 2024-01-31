@@ -28,7 +28,6 @@ const getLocalConfig = async () => {
         input.value = response.intervalo;
 
     } catch (error) {
-        console.log(":(")
         console.error("Error al obtener la configuración:", error);
     }
 };
